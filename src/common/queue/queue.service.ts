@@ -42,6 +42,23 @@ export interface QueueJobStatus {
   failedReason?: string;
 }
 
+export interface QueueMetrics {
+  queue: string;
+  active: number;
+  waiting: number;
+  delayed: number;
+  completed: number;
+  failed: number;
+  paused: number;
+  total: number;
+  failureRate: number;
+}
+
+export interface QueueMetricsReport {
+  generatedAt: string;
+  queues: QueueMetrics[];
+}
+
 @Injectable()
 export class QueueService {
   constructor(
@@ -82,6 +99,49 @@ export class QueueService {
       attemptsMade: job.attemptsMade,
       result: job.returnvalue,
       failedReason: job.failedReason,
+    };
+  }
+
+  async getQueueMetrics(): Promise<QueueMetricsReport> {
+    const queues = [this.notificationEmailQueue];
+    const metrics = await Promise.all(
+      queues.map((queue) => this.collectQueueMetrics(queue)),
+    );
+
+    return {
+      generatedAt: new Date().toISOString(),
+      queues: metrics,
+    };
+  }
+
+  private async collectQueueMetrics(queue: Queue): Promise<QueueMetrics> {
+    const counts = await queue.getJobCounts(
+      'active',
+      'waiting',
+      'delayed',
+      'completed',
+      'failed',
+      'paused',
+    );
+
+    const active = counts.active ?? 0;
+    const waiting = counts.waiting ?? 0;
+    const delayed = counts.delayed ?? 0;
+    const completed = counts.completed ?? 0;
+    const failed = counts.failed ?? 0;
+    const paused = counts.paused ?? 0;
+    const total = active + waiting + delayed + completed + failed + paused;
+
+    return {
+      queue: queue.name,
+      active,
+      waiting,
+      delayed,
+      completed,
+      failed,
+      paused,
+      total,
+      failureRate: total > 0 ? failed / total : 0,
     };
   }
 }

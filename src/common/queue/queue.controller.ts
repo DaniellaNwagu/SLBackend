@@ -16,4 +16,10 @@ export class QueueController {
   getJobStatus(@Param('id') jobId: string, @CurrentUser('id') userId: string) {
     return this.queueService.getJobStatus(jobId, userId);
   }
+
+  @Get('metrics')
+  @ApiOperation({ summary: 'Get aggregated job counts per registered queue' })
+  getQueueMetrics() {
+    return this.queueService.getQueueMetrics();
+  }
 }
