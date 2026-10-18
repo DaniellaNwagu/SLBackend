@@ -1,6 +1,6 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
-import { Queue } from 'bullmq';
+import { Job, JobsOptions, Queue } from 'bullmq';
 import { plainToInstance } from 'class-transformer';
 import { IsEmail, IsEnum, IsNotEmpty, IsOptional, IsString, MaxLength, validateSync } from 'class-validator';
 import { NotificationType } from '@prisma/client';
@@ -64,6 +64,31 @@ export interface QueueMetricsReport {
   queues: QueueMetrics[];
 }
 
+export interface DeadLetterJob {
+  id: string;
+  queue: string;
+  name: string;
+  attemptsMade: number;
+  failedReason?: string;
+  failedAt?: string;
+  data: unknown;
+}
+
+/**
+ * Explicit retry policy applied to every job added to the notification email
+ * queue. Jobs are retried with exponential backoff and, once all attempts are
+ * exhausted, remain in the queue's `failed` set as the dead-letter store.
+ */
+export const NOTIFICATION_EMAIL_JOB_OPTIONS: JobsOptions = {
+  attempts: 5,
+  backoff: {
+    type: 'exponential',
+    delay: 5_000,
+  },
+  removeOnComplete: { age: 24 * 60 * 60, count: 1_000 },
+  removeOnFail: false,
+};
+
 @Injectable()
 export class QueueService {
   constructor(
@@ -86,7 +111,11 @@ export class QueueService {
       data.correlationId = correlationId;
     }
 
-    const job = await this.notificationEmailQueue.add(NOTIFICATION_EMAIL_JOB, data);
+    const job = await this.notificationEmailQueue.add(
+      NOTIFICATION_EMAIL_JOB,
+      data,
+      NOTIFICATION_EMAIL_JOB_OPTIONS,
+    );
     return { id: job.id as string, status: await job.getState() };
   }
 
@@ -120,6 +149,47 @@ export class QueueService {
     return {
       generatedAt: new Date().toISOString(),
       queues: metrics,
+    };
+  }
+
+  async listDeadLetterJobs(limit = 50): Promise<DeadLetterJob[]> {
+    const jobs = await this.notificationEmailQueue.getFailed(0, limit - 1);
+    return jobs.map((job) => this.toDeadLetterJob(job));
+  }
+
+  async requeueDeadLetterJob(jobId: string): Promise<QueueJobStatus> {
+    const job = await this.notificationEmailQueue.getJob(jobId);
+    if (!job) {
+      throw new NotFoundException('Job not found');
+    }
+
+    const state = await job.getState();
+    if (state !== 'failed') {
+      throw new BadRequestException('Only failed jobs can be requeued');
+    }
+
+    await job.retry('failed');
+
+    return {
+      id: job.id as string,
+      queue: NOTIFICATION_EMAIL_QUEUE,
+      status: await job.getState(),
+      progress: job.progress as any,
+      attemptsMade: job.attemptsMade,
+      result: job.returnvalue,
+      failedReason: job.failedReason,
+    };
+  }
+
+  private toDeadLetterJob(job: Job<NotificationEmailJobData>): DeadLetterJob {
+    return {
+      id: job.id as string,
+      queue: NOTIFICATION_EMAIL_QUEUE,
+      name: job.name,
+      attemptsMade: job.attemptsMade,
+      failedReason: job.failedReason,
+      failedAt: job.finishedOn ? new Date(job.finishedOn).toISOString() : undefined,
+      data: job.data,
     };
   }
 

@@ -1,4 +1,4 @@
-import { Controller, Get, Param, UseGuards } from '@nestjs/common';
+import { Controller, Get, Param, Post, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { CurrentUser } from '../decorators/current-user.decorator';
 import { JwtAuthGuard } from '../guards/jwt-auth.guard';
@@ -21,5 +21,20 @@ export class QueueController {
   @ApiOperation({ summary: 'Get aggregated job counts per registered queue' })
   getQueueMetrics() {
     return this.queueService.getQueueMetrics();
+  }
+
+  @Get('dead-letter')
+  @ApiOperation({ summary: 'List permanently-failed (dead-letter) jobs across queues' })
+  getDeadLetterJobs() {
+    return this.queueService.getDeadLetterJobs();
+  }
+
+  @Post('dead-letter/:queueName/:id/requeue')
+  @ApiOperation({ summary: 'Manually requeue a permanently-failed job' })
+  requeueDeadLetterJob(
+    @Param('queueName') queueName: string,
+    @Param('id') jobId: string,
+  ) {
+    return this.queueService.requeueDeadLetterJob(queueName, jobId);
   }
 }
