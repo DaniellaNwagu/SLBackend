@@ -2,7 +2,7 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import { plainToInstance } from 'class-transformer';
-import { IsEmail, IsEnum, IsNotEmpty, IsString, MaxLength, validateSync } from 'class-validator';
+import { IsEmail, IsEnum, IsNotEmpty, IsOptional, IsString, MaxLength, validateSync } from 'class-validator';
 import { NotificationType } from '@prisma/client';
 import { NOTIFICATION_EMAIL_JOB, NOTIFICATION_EMAIL_QUEUE } from './queue.constants';
 
@@ -30,6 +30,11 @@ export class NotificationEmailJobData {
 
   @IsEnum(NotificationType)
   type: NotificationType;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  correlationId?: string;
 }
 
 export interface QueueJobStatus {
@@ -66,7 +71,7 @@ export class QueueService {
     private readonly notificationEmailQueue: Queue<NotificationEmailJobData>,
   ) {}
 
-  async enqueueNotificationEmail(payload: unknown) {
+  async enqueueNotificationEmail(payload: unknown, correlationId?: string) {
     const data = plainToInstance(NotificationEmailJobData, payload);
     const errors = validateSync(data, {
       whitelist: true,
@@ -75,6 +80,10 @@ export class QueueService {
     });
     if (errors.length) {
       throw new BadRequestException('Invalid notification email job payload');
+    }
+
+    if (correlationId && !data.correlationId) {
+      data.correlationId = correlationId;
     }
 
     const job = await this.notificationEmailQueue.add(NOTIFICATION_EMAIL_JOB, data);
